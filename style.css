@@ -1,15 +1,23 @@
+.mes .tt-model-wrap {
+    display: inline-flex !important;
+    align-items: baseline;
+    flex: 0 0 auto !important;
+    float: none !important;
+    margin-right: auto;
+    max-width: 100%;
+    white-space: nowrap;
+}
+
+.mes .tt-model-tag {
+    display: inline !important;
+    white-space: nowrap;
+}
+
 .mes .tt-provider-tag {
-    display: inline;
+    display: inline !important;
     opacity: 0.55;
     font-size: 11px;
     font-weight: 400;
-    margin-left: 4px;
+    margin-left: 2px;
     white-space: nowrap;
-    flex: 0 0 auto;
-}
-
-.mes .tt-model-wrap {
-    display: inline;
-    white-space: nowrap;
-    flex: 0 0 auto;
 }
