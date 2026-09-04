@@ -72,42 +72,45 @@ function stampProvider($mes, name) {
 
     const settings = getSettings();
     const want = settings.enabled && name ? ` (${name})` : '';
-
     let $tag = $mes.find('.tt-provider-tag').first();
+    const $model = $mes.find('.tt-model-tag').first();
 
     if (!want) {
         $tag.remove();
         return;
     }
 
-    // 已有且内容相同：什么都不动
-    if ($tag.length && $tag.text() === want) {
-        return;
-    }
-
-    // 已有但文字变了：只改字
-    if ($tag.length) {
-        $tag.text(want);
-        return;
-    }
-
-    // 没有才创建一次
-    const html = `<span class="tt-provider-tag">${escapeHtml(want)}</span>`;
-    const $model = $mes.find('.tt-model-tag').first();
-
+    // 有模型名：必须和模型名包在同一组里，避免 flex 左右拆开
     if ($model.length) {
         if (!$model.parent().hasClass('tt-model-wrap')) {
             $model.wrap('<span class="tt-model-wrap"></span>');
         }
-        $model.after(html);
+        const $wrap = $model.parent('.tt-model-wrap');
+
+        if (!$tag.length) {
+            $tag = $(`<span class="tt-provider-tag"></span>`);
+        }
+        // 无论原来在哪，都挪进 wrap，贴在模型名后面
+        if ($tag.parent()[0] !== $wrap[0] || $tag.prev()[0] !== $model[0]) {
+            $model.after($tag);
+        }
+        if ($tag.text() !== want) {
+            $tag.text(want);
+        }
         return;
     }
 
-    const $host = $mes
-        .find('.mes_block > .ch_name, .mes_block .name_date, .ch_name')
-        .first();
-    if ($host.length) {
-        $host.append(html);
+    // 没有模型名标签时，挂到角色名行
+    if (!$tag.length) {
+        const $host = $mes
+            .find('.mes_block > .ch_name, .mes_block .name_date, .ch_name')
+            .first();
+        if (!$host.length) return;
+        $tag = $(`<span class="tt-provider-tag"></span>`);
+        $host.append($tag);
+    }
+    if ($tag.text() !== want) {
+        $tag.text(want);
     }
 }
 
