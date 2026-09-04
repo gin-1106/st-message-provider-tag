@@ -1,16 +1,22 @@
 /**
  * Message Provider Tag
- * 生成结束写入连接配置名；只显示已存记录；不闪、不挤到行尾。
+ * 同时显示：模型名 + (连接配置名)
+ * 请关闭酒馆助手里单独的「模型名」脚本，避免抢 DOM。
  */
 
 const MODULE = 'message-provider-tag';
-const EXTRA_KEY = 'tt_provider';
+const EXTRA_PROVIDER = 'tt_provider';
+const EXTRA_MODEL = 'tt_model';
 
 function getSettings() {
     const ctx = SillyTavern.getContext();
     const root = ctx.extensionSettings || window.extension_settings || {};
     if (!root[MODULE]) {
-        root[MODULE] = { enabled: true };
+        root[MODULE] = {
+            enabled: true,
+            showModel: true,
+            showProvider: true,
+        };
     }
     return root[MODULE];
 }
@@ -22,25 +28,42 @@ function getConnectionProfileName() {
             window.extension_settings ||
             {};
         const cm = ext.connectionManager;
-        if (!cm) return '';
-
-        const selected = cm.selectedProfile;
-        if (!selected) return '';
-
-        const list = Array.isArray(cm.profiles) ? cm.profiles : [];
-        const hit = list.find((p) => p && p.id === selected);
+        if (!cm || !cm.selectedProfile) return '';
+        const hit = (cm.profiles || []).find((p) => p && p.id === cm.selectedProfile);
         if (hit && hit.name) return String(hit.name).trim();
-
-        const text = String(
-            $('#connection_profiles option:selected').text() || '',
-        ).trim();
-        if (text && text !== '<None>' && text.toLowerCase() !== 'none') {
-            return text;
-        }
+        const text = String($('#connection_profiles option:selected').text() || '').trim();
+        if (text && text !== '<None>' && text.toLowerCase() !== 'none') return text;
     } catch (e) {
-        console.warn(`[${MODULE}] getConnectionProfileName failed`, e);
+        console.warn(`[${MODULE}] profile`, e);
     }
     return '';
+}
+
+function getCurrentModelName() {
+    try {
+        const ctx = SillyTavern.getContext();
+        const s = ctx.chatCompletionSettings || {};
+        const oai = window.oai_settings || {};
+        const list = [
+            s.openai_model,
+            s.custom_model,
+            oai.openai_model,
+            oai.custom_model,
+            $('#custom_model_id').val(),
+            $('#model_openai_select').val(),
+        ];
+        return list.map((x) => String(x || '').trim()).find(Boolean) || '';
+    } catch (e) {
+        return '';
+    }
+}
+
+function isGenerating() {
+    return !!(
+        document.querySelector('.mes_stop, #mes_stop, .streaming-cursor') ||
+        window.is_send_press ||
+        window.is_generating
+    );
 }
 
 function saveChatSafe() {
@@ -63,54 +86,44 @@ function escapeHtml(s) {
         .replace(/"/g, '&quot;');
 }
 
-/**
- * 只更新文字，不乱删重建 → 不闪
- * 括号是模型名的兄弟节点，不在 .tt-model-tag 内部 → 不被 .text() 清掉
- */
-function stampProvider($mes, name) {
+/** 整行自己画，不依赖别的脚本的 .tt-model-tag */
+function stampMeta($mes, modelName, providerName) {
     if (!$mes || !$mes.length) return;
 
     const settings = getSettings();
-    const want = settings.enabled && name ? ` (${name})` : '';
-    let $tag = $mes.find('.tt-provider-tag').first();
-    const $model = $mes.find('.tt-model-tag').first();
-
-    if (!want) {
-        $tag.remove();
+    if (!settings.enabled) {
+        $mes.find('.tt-meta-line').remove();
         return;
     }
 
-    // 有模型名：必须和模型名包在同一组里，避免 flex 左右拆开
-    if ($model.length) {
-        if (!$model.parent().hasClass('tt-model-wrap')) {
-            $model.wrap('<span class="tt-model-wrap"></span>');
-        }
-        const $wrap = $model.parent('.tt-model-wrap');
-
-        if (!$tag.length) {
-            $tag = $(`<span class="tt-provider-tag"></span>`);
-        }
-        // 无论原来在哪，都挪进 wrap，贴在模型名后面
-        if ($tag.parent()[0] !== $wrap[0] || $tag.prev()[0] !== $model[0]) {
-            $model.after($tag);
-        }
-        if ($tag.text() !== want) {
-            $tag.text(want);
-        }
+    const model = settings.showModel ? modelName || '' : '';
+    const provider = settings.showProvider ? providerName || '' : '';
+    if (!model && !provider) {
+        $mes.find('.tt-meta-line').remove();
         return;
     }
 
-    // 没有模型名标签时，挂到角色名行
-    if (!$tag.length) {
-        const $host = $mes
-            .find('.mes_block > .ch_name, .mes_block .name_date, .ch_name')
-            .first();
-        if (!$host.length) return;
-        $tag = $(`<span class="tt-provider-tag"></span>`);
-        $host.append($tag);
+    let $line = $mes.find('.tt-meta-line').first();
+    if (!$line.length) {
+        $line = $('<div class="tt-meta-line"></div>');
+        // 插在正文上方、按钮下方：优先 mes_text 前面
+        const $text = $mes.find('.mes_text').first();
+        if ($text.length) {
+            $text.before($line);
+        } else {
+            $mes.find('.mes_block').first().append($line);
+        }
     }
-    if ($tag.text() !== want) {
-        $tag.text(want);
+
+    const modelHtml = model
+        ? `<span class="tt-model-part">${escapeHtml(model)}</span>`
+        : '';
+    const providerHtml = provider
+        ? `<span class="tt-provider-part"> (${escapeHtml(provider)})</span>`
+        : '';
+    const next = modelHtml + providerHtml;
+    if ($line.html() !== next) {
+        $line.html(next);
     }
 }
 
@@ -118,8 +131,9 @@ function bindLastAssistantMessage() {
     const settings = getSettings();
     if (!settings.enabled) return;
 
-    const name = getConnectionProfileName();
-    if (!name) return;
+    const provider = getConnectionProfileName();
+    const model = getCurrentModelName();
+    if (!provider && !model) return;
 
     const ctx = SillyTavern.getContext();
     const chat = ctx.chat || [];
@@ -134,22 +148,47 @@ function bindLastAssistantMessage() {
 
     const mes = chat[lastAi];
     mes.extra = mes.extra || {};
-    if (mes.extra[EXTRA_KEY] !== name) {
-        mes.extra[EXTRA_KEY] = name;
-        saveChatSafe();
+    let changed = false;
+    if (provider && mes.extra[EXTRA_PROVIDER] !== provider) {
+        mes.extra[EXTRA_PROVIDER] = provider;
+        changed = true;
     }
-    stampProvider($(`.mes[mesid="${lastAi}"]`), name);
+    if (model && mes.extra[EXTRA_MODEL] !== model) {
+        mes.extra[EXTRA_MODEL] = model;
+        changed = true;
+    }
+    if (changed) saveChatSafe();
+
+    stampMeta(
+        $(`.mes[mesid="${lastAi}"]`),
+        mes.extra[EXTRA_MODEL] || model,
+        mes.extra[EXTRA_PROVIDER] || provider,
+    );
 }
 
 function renderAll() {
     const settings = getSettings();
     const ctx = SillyTavern.getContext();
     const chat = ctx.chat || [];
+    const generating = isGenerating();
+    let lastAi = -1;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (chat[i] && !chat[i].is_user) {
+            lastAi = i;
+            break;
+        }
+    }
 
     chat.forEach((mes, i) => {
         if (!mes || mes.is_user) return;
-        const stored = settings.enabled ? mes.extra?.[EXTRA_KEY] || '' : '';
-        stampProvider($(`.mes[mesid="${i}"]`), stored);
+        let model = settings.enabled ? mes.extra?.[EXTRA_MODEL] || '' : '';
+        let provider = settings.enabled ? mes.extra?.[EXTRA_PROVIDER] || '' : '';
+        // 正在生成且还没写入：用当前值
+        if (generating && i === lastAi) {
+            if (!model) model = getCurrentModelName();
+            if (!provider) provider = getConnectionProfileName();
+        }
+        stampMeta($(`.mes[mesid="${i}"]`), model, provider);
     });
 }
 
@@ -158,9 +197,16 @@ function onMessageDone() {
     renderAll();
 }
 
+function scheduleRender() {
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            renderAll();
+        });
+    });
+}
+
 function addSettings() {
     if ($('#mpt_enabled').length) return;
-
     const settings = getSettings();
     const html = `
     <div class="message-provider-tag-settings">
@@ -172,27 +218,41 @@ function addSettings() {
             <div class="inline-drawer-content">
                 <label class="checkbox_label">
                     <input type="checkbox" id="mpt_enabled" ${settings.enabled ? 'checked' : ''}>
-                    <span>在消息上显示连接配置名</span>
+                    <span>启用</span>
                 </label>
-                <small>
-                    生成完成时写入当前连接配置名。旧楼无记录则不显示。
-                </small>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="mpt_show_model" ${settings.showModel !== false ? 'checked' : ''}>
+                    <span>显示模型名</span>
+                </label>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="mpt_show_provider" ${settings.showProvider !== false ? 'checked' : ''}>
+                    <span>显示连接配置名</span>
+                </label>
+                <small>请关闭酒馆助手里单独的模型名脚本，只留本扩展。</small>
             </div>
         </div>
     </div>`;
-
     $('#extensions_settings').append(html);
-    $('#mpt_enabled').on('input', function () {
-        getSettings().enabled = !!$(this).prop('checked');
+
+    const save = () => {
         try {
             const ctx = SillyTavern.getContext();
-            if (typeof ctx.saveSettingsDebounced === 'function') {
-                ctx.saveSettingsDebounced();
-            } else if (typeof saveSettingsDebounced === 'function') {
-                saveSettingsDebounced();
-            }
+            if (typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
+            else if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced();
         } catch (e) {}
         renderAll();
+    };
+    $('#mpt_enabled').on('input', function () {
+        getSettings().enabled = !!$(this).prop('checked');
+        save();
+    });
+    $('#mpt_show_model').on('input', function () {
+        getSettings().showModel = !!$(this).prop('checked');
+        save();
+    });
+    $('#mpt_show_provider').on('input', function () {
+        getSettings().showProvider = !!$(this).prop('checked');
+        save();
     });
 }
 
@@ -201,19 +261,15 @@ jQuery(async () => {
     const { eventSource, eventTypes } = ctx;
     const types = eventTypes || ctx.event_types || window.event_types || {};
 
-    const MESSAGE_RECEIVED = types.MESSAGE_RECEIVED || 'MESSAGE_RECEIVED';
-    const GENERATION_ENDED = types.GENERATION_ENDED || 'GENERATION_ENDED';
-    const CHAT_CHANGED = types.CHAT_CHANGED || 'CHAT_CHANGED';
-    const CHARACTER_MESSAGE_RENDERED =
-        types.CHARACTER_MESSAGE_RENDERED || 'CHARACTER_MESSAGE_RENDERED';
-
     addSettings();
     renderAll();
 
-    eventSource.on(MESSAGE_RECEIVED, onMessageDone);
-    eventSource.on(GENERATION_ENDED, onMessageDone);
-    eventSource.on(CHAT_CHANGED, renderAll);
-    eventSource.on(CHARACTER_MESSAGE_RENDERED, renderAll);
+    eventSource.on(types.GENERATION_STARTED || 'GENERATION_STARTED', scheduleRender);
+    eventSource.on(types.STREAM_TOKEN_RECEIVED || 'STREAM_TOKEN_RECEIVED', scheduleRender);
+    eventSource.on(types.CHARACTER_MESSAGE_RENDERED || 'CHARACTER_MESSAGE_RENDERED', scheduleRender);
+    eventSource.on(types.MESSAGE_RECEIVED || 'MESSAGE_RECEIVED', onMessageDone);
+    eventSource.on(types.GENERATION_ENDED || 'GENERATION_ENDED', onMessageDone);
+    eventSource.on(types.CHAT_CHANGED || 'CHAT_CHANGED', renderAll);
 
     console.log(`[${MODULE}] loaded`);
 });
