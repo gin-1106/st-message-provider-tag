@@ -1,7 +1,6 @@
 /**
  * Message Provider Tag
- * 生成完成时把当前「连接配置」名字写入消息 extra，并显示在角色名旁。
- * 只显示已写入的记录；没有记录的旧楼不显示，也不会拿当前连接去顶替。
+ * 生成结束写入连接配置名；只显示已存记录；不闪、不挤到行尾。
  */
 
 const MODULE = 'message-provider-tag';
@@ -11,10 +10,7 @@ function getSettings() {
     const ctx = SillyTavern.getContext();
     const root = ctx.extensionSettings || window.extension_settings || {};
     if (!root[MODULE]) {
-        root[MODULE] = {
-            enabled: true,
-            showOnHeader: true,
-        };
+        root[MODULE] = { enabled: true };
     }
     return root[MODULE];
 }
@@ -22,7 +18,9 @@ function getSettings() {
 function getConnectionProfileName() {
     try {
         const ext =
-            (SillyTavern.getContext().extensionSettings || window.extension_settings || {});
+            SillyTavern.getContext().extensionSettings ||
+            window.extension_settings ||
+            {};
         const cm = ext.connectionManager;
         if (!cm) return '';
 
@@ -57,17 +55,46 @@ function saveChatSafe() {
     else if (typeof saveChatConditional === 'function') saveChatConditional();
 }
 
+function escapeHtml(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+/**
+ * 只更新文字，不乱删重建 → 不闪
+ * 括号是模型名的兄弟节点，不在 .tt-model-tag 内部 → 不被 .text() 清掉
+ */
 function stampProvider($mes, name) {
     if (!$mes || !$mes.length) return;
 
-    $mes.find('.tt-provider-tag').remove();
-    if (!name) return;
-
     const settings = getSettings();
-    if (!settings.enabled) return;
+    const want = settings.enabled && name ? ` (${name})` : '';
 
-    const html = `<span class="tt-provider-tag"> (${escapeHtml(name)})</span>`;
+    let $tag = $mes.find('.tt-provider-tag').first();
+
+    if (!want) {
+        $tag.remove();
+        return;
+    }
+
+    // 已有且内容相同：什么都不动
+    if ($tag.length && $tag.text() === want) {
+        return;
+    }
+
+    // 已有但文字变了：只改字
+    if ($tag.length) {
+        $tag.text(want);
+        return;
+    }
+
+    // 没有才创建一次
+    const html = `<span class="tt-provider-tag">${escapeHtml(want)}</span>`;
     const $model = $mes.find('.tt-model-tag').first();
+
     if ($model.length) {
         if (!$model.parent().hasClass('tt-model-wrap')) {
             $model.wrap('<span class="tt-model-wrap"></span>');
@@ -76,18 +103,12 @@ function stampProvider($mes, name) {
         return;
     }
 
-    const $host = $mes.find('.mes_block > .ch_name, .mes_block .name_date, .ch_name').first();
+    const $host = $mes
+        .find('.mes_block > .ch_name, .mes_block .name_date, .ch_name')
+        .first();
     if ($host.length) {
         $host.append(html);
     }
-}
-
-function escapeHtml(s) {
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 function bindLastAssistantMessage() {
@@ -135,6 +156,8 @@ function onMessageDone() {
 }
 
 function addSettings() {
+    if ($('#mpt_enabled').length) return;
+
     const settings = getSettings();
     const html = `
     <div class="message-provider-tag-settings">
@@ -149,7 +172,7 @@ function addSettings() {
                     <span>在消息上显示连接配置名</span>
                 </label>
                 <small>
-                    生成完成时写入当前「连接配置」名称。旧楼没有记录则不显示，不会用当前连接顶替。
+                    生成完成时写入当前连接配置名。旧楼无记录则不显示。
                 </small>
             </div>
         </div>
@@ -160,8 +183,11 @@ function addSettings() {
         getSettings().enabled = !!$(this).prop('checked');
         try {
             const ctx = SillyTavern.getContext();
-            if (typeof ctx.saveSettingsDebounced === 'function') ctx.saveSettingsDebounced();
-            else if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced();
+            if (typeof ctx.saveSettingsDebounced === 'function') {
+                ctx.saveSettingsDebounced();
+            } else if (typeof saveSettingsDebounced === 'function') {
+                saveSettingsDebounced();
+            }
         } catch (e) {}
         renderAll();
     });
@@ -170,8 +196,8 @@ function addSettings() {
 jQuery(async () => {
     const ctx = SillyTavern.getContext();
     const { eventSource, eventTypes } = ctx;
-
     const types = eventTypes || ctx.event_types || window.event_types || {};
+
     const MESSAGE_RECEIVED = types.MESSAGE_RECEIVED || 'MESSAGE_RECEIVED';
     const GENERATION_ENDED = types.GENERATION_ENDED || 'GENERATION_ENDED';
     const CHAT_CHANGED = types.CHAT_CHANGED || 'CHAT_CHANGED';
